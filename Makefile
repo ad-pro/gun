@@ -2,7 +2,7 @@
 
 PROJECT = gun
 PROJECT_DESCRIPTION = HTTP/1.1, HTTP/2 and Websocket client for Erlang/OTP.
-PROJECT_VERSION = 2.0.0-pre.1
+PROJECT_VERSION = 2.0.0-pre.2
 
 # Options.
 
@@ -14,7 +14,7 @@ CT_OPTS += -ct_hooks gun_ct_hook [] # -boot start_sasl
 LOCAL_DEPS = ssl
 
 DEPS = cowlib
-dep_cowlib = git https://github.com/ninenines/cowlib master
+dep_cowlib = git https://github.com/ninenines/cowlib 2.9.0
 
 DOC_DEPS = asciideck
 
@@ -27,10 +27,10 @@ dep_cowboy_commit = master
 dep_ci.erlang.mk = git https://github.com/ninenines/ci.erlang.mk master
 DEP_EARLY_PLUGINS = ci.erlang.mk
 
-AUTO_CI_OTP ?= OTP-20+
+AUTO_CI_OTP ?= OTP-22+
 AUTO_CI_HIPE ?= OTP-LATEST
 # AUTO_CI_ERLLVM ?= OTP-LATEST
-AUTO_CI_WINDOWS ?= OTP-20+
+AUTO_CI_WINDOWS ?= OTP-22+
 
 # Standard targets.
 
@@ -67,6 +67,57 @@ $(H2SPECD):
 	-$(verbose) git clone --depth 1 https://github.com/summerwind/h2spec $(dir $(H2SPECD))
 	-$(verbose) $(MAKE) -C $(dir $(H2SPECD)) build MAKEFLAGS=
 	-$(verbose) go build -o $(H2SPECD) $(dir $(H2SPECD))/cmd/h2spec/h2specd.go
+
+# Public suffix module generator.
+# https://publicsuffix.org/list/
+
+GEN_URL = https://publicsuffix.org/list/public_suffix_list.dat
+GEN_DAT = $(ERLANG_MK_TMP)/public_suffix_list.dat
+GEN_SRC = src/gun_public_suffix.erl.src
+GEN_OUT = src/gun_public_suffix.erl
+
+# We use idna for punycode encoding when generating the module.
+dep_idna = git https://github.com/benoitc/erlang-idna 6.0.0
+$(eval $(call dep_target,idna))
+
+# 33 is $!
+define gen.erl
+	{ok, Dat} = file:read_file("$(GEN_DAT)"),
+	Lines = [L || L <- string:split(Dat, <<"\n">>, all),
+		L =/= <<>>, binary:first(L) =/= $$/, binary:first(L) =/= $$\s],
+	Punycode = fun(V) ->
+		unicode:characters_to_binary(idna:encode(unicode:characters_to_list(V)))
+	end,
+	M0 = [string:replace(L, <<"*">>, <<"star-gen-placeholder">>, all)
+		|| L <- Lines, binary:first(L) =/= 33],
+	M1 = [io_lib:format("m(S = ~p) -> e(S);~n", [string:split(Punycode(L), <<".">>, all)])
+		|| L <- M0],
+	M = string:replace(M1, <<"<<\\"star-gen-placeholder\\">>">>, <<"_">>, all),
+	E = [io_lib:format("e(~p) -> false;~n", [string:split(Punycode(L), <<".">>, all)])
+		|| <<"!",L/bits>> <- Lines],
+	{ok, Src0} = file:read_file("$(GEN_SRC)"),
+	Src1 = string:replace(Src0, <<"%% GENERATED_M\n">>, M),
+	Src = string:replace(Src1, <<"%% GENERATED_E\n">>, E),
+	ok = file:write_file("$(GEN_OUT)", Src),
+	halt().
+endef
+
+.PHONY: gen gen-idna
+
+gen-idna: $(DEPS_DIR)/idna
+	$(verbose) $(MAKE) -C $?
+
+gen: gen-idna | $(ERLANG_MK_TMP)
+	$(gen_verbose) wget -qO - $(GEN_URL) > $(GEN_DAT)
+	$(gen_verbose) $(call erlang,$(call gen.erl))
+
+# Automatically update the http-state files in test/wpt/cookies.
+
+update-cookie-tests:
+	$(verbose) rm -rf $(ERLANG_MK_TMP)/wpt
+	$(verbose) rm -f test/wpt/cookies/*
+	$(verbose) git clone https://github.com/web-platform-tests/wpt $(ERLANG_MK_TMP)/wpt
+	$(verbose) cp $(ERLANG_MK_TMP)/wpt/cookies/http-state/resources/test-files/* test/wpt/cookies/
 
 # Prepare for the release.
 

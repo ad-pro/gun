@@ -22,6 +22,10 @@
 
 %% Cowboy listeners.
 
+init_cowboy_tcp(Ref, ProtoOpts, Config) ->
+	{ok, _} = cowboy:start_clear(Ref, [{port, 0}], ProtoOpts),
+	[{ref, Ref}, {port, ranch:get_port(Ref)}|Config].
+
 init_cowboy_tls(Ref, ProtoOpts, Config) ->
 	Opts = ct_helper:get_certs_from_ets(),
 	{ok, _} = cowboy:start_tls(Ref, Opts ++ [{port, 0}], ProtoOpts),
@@ -40,8 +44,13 @@ init_origin(Transport, Protocol, Fun) ->
 	Port = receive_from(Pid),
 	{ok, Pid, Port}.
 
-init_origin(Parent, tcp, Protocol, Fun) ->
-	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+init_origin(Parent, Transport, Protocol, Fun)
+		when Transport =:= tcp; Transport =:= tcp6 ->
+	InetOpt = case Transport of
+		tcp -> inet;
+		tcp6 -> inet6
+	end,
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}, InetOpt]),
 	{ok, {_, Port}} = inet:sockname(ListenSocket),
 	Parent ! {self(), Port},
 	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),

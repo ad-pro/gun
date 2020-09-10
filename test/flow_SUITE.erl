@@ -89,9 +89,8 @@ default_flow_http2(_) ->
 		StreamRef2 = gun:get(ConnPid, "/", [], #{flow => 2}),
 		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef2),
 		%% We set the flow to 2 but due to the ensure_window algorithm
-		%% we end up receiving *5* data messages before flow control kicks in,
-		%% equivalent to 3 SSE events.
-		{data, nofin, _} = gun:await(ConnPid, StreamRef2),
+		%% we end up receiving *4* data messages before we consume
+		%% the window.
 		{data, nofin, _} = gun:await(ConnPid, StreamRef2),
 		{data, nofin, _} = gun:await(ConnPid, StreamRef2),
 		{data, nofin, _} = gun:await(ConnPid, StreamRef2),
@@ -185,18 +184,18 @@ flow_ws(_) ->
 		%% Gun handles them in separate Protocol:handle calls.
 		Frame = {text, <<"Hello!">>},
 		gun:ws_send(ConnPid, Frame),
-		timer:sleep(100),
+		timer:sleep(500),
 		gun:ws_send(ConnPid, Frame),
 		%% We set the flow to 1 therefore we will receive 1 data message,
 		%% and then nothing because Gun doesn't read from the socket.
 		{ws, _} = gun:await(ConnPid, StreamRef),
 		{error, timeout} = gun:await(ConnPid, StreamRef, 3000),
-		%% We send 2 more frames.
-		gun:ws_send(ConnPid, Frame),
-		timer:sleep(100),
-		gun:ws_send(ConnPid, Frame),
-		%% We then update the flow and get 2 more data messages but no more.
+		%% We then update the flow, send 2 frames with some time in between
+		%% and get 2 more data messages but no more.
 		gun:update_flow(ConnPid, StreamRef, 2),
+		gun:ws_send(ConnPid, Frame),
+		timer:sleep(500),
+		gun:ws_send(ConnPid, Frame),
 		{ws, _} = gun:await(ConnPid, StreamRef),
 		{ws, _} = gun:await(ConnPid, StreamRef),
 		{error, timeout} = gun:await(ConnPid, StreamRef, 1000),
